@@ -19,79 +19,42 @@ include!("queries.rs");
 
 #[contractimpl]
 impl MergeMintContract {
-    /// Add a verifier to an Open bounty. Creator only.
+    /// Returns a page of bounties associated with `tag`.
     ///
-    /// The new verifier must not be the bounty assignee. After the change the
-    /// approval threshold must still be less than or equal to the verifier
-    /// count.
-    pub fn add_verifier(env: Env, bounty_id: BountyId, verifier: Address) -> Result<(), ContractError> {
-        let mut bounty: Bounty = storage::get_bounty(&env, bounty_id)?;
-
-        bounty.creator.require_auth();
-
-        if bounty.status != BountyStatus::Open {
-            fail(&env, ContractError::BountyNotOpen);
+    /// Invalid tags fail with `InvalidTag`, matching `create_bounty` validation.
+    pub fn get_bounties_by_tag(
+        env: Env,
+        tag: Symbol,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<Bounty>, ContractError> {
+        if !storage::is_valid_tag(&env, &tag) {
+            fail(&env, ContractError::InvalidTag);
         }
-
-        if let Some(assignee) = bounty.assignee.clone() {
-            if assignee == verifier {
-                fail(&env, ContractError::VerifierCannotBeAssignee);
-            }
-        }
-
-        if bounty.verifiers.contains(&verifier) {
-            fail(&env, ContractError::VerifierAlreadyExists);
-        }
-
-        bounty.verifiers.push_back(verifier.clone());
-
-        if bounty.approval_threshold > bounty.verifiers.len() {
-            fail(&env, ContractError::ApprovalThresholdExceedsVerifiers);
-        }
-
-        storage::set_bounty(&env, bounty_id, &bounty);
-
-        events::verifier_added(&env, bounty_id, &verifier);
-
-        Ok(())
+        Ok(storage::get_bounties_by_tag(&env, &tag, offset, limit))
     }
 
-    /// Remove a verifier from an Open bounty. Creator only.
+    /// Returns the total number of bounties associated with `tag`.
     ///
-    /// After the change the approval threshold must still be less than or
-    /// equal to the verifier count.
-    pub fn remove_verifier(env: Env, bounty_id: BountyId, verifier: Address) -> Result<(), ContractError> {
-        let mut bounty: Bounty = storage::get_bounty(&env, bounty_id)?;
-
-        bounty.creator.require_auth();
-
-        if bounty.status != BountyStatus::Open {
-            fail(&env, ContractError::BountyNotOpen);
+    /// Invalid tags fail with `InvalidTag`, matching `create_bounty` validation.
+    pub fn get_tag_count(env: Env, tag: Symbol) -> Result<u32, ContractError> {
+        if !storage::is_valid_tag(&env, &tag) {
+            fail(&env, ContractError::InvalidTag);
         }
+        Ok(storage::get_tag_count(&env, &tag))
+    }
 
-        let mut index: Option<u32> = None;
-        for i in 0..bounty.verifiers.len() {
-            if bounty.verifiers.get(i).unwrap() == verifier {
-                index = Some(i);
-                break;
-            }
-        }
-
-        let index = match index {
-            Some(i) => i,
-            None => fail(&env, ContractError::VerifierNotFound),
-        };
-
-        bounty.verifiers.remove(index);
-
-        if bounty.approval_threshold > bounty.verifiers.len() {
-            fail(&env, ContractError::ApprovalThresholdExceedsVerifiers);
-        }
-
-        storage::set_bounty(&env, bounty_id, &bounty);
-
-        events::verifier_removed(&env, bounty_id, &verifier);
-
-        Ok(())
+    /// Replaces the tags on an Open bounty. Callable only by the bounty creator.
+    ///
+    /// Stale tag index entries are removed and new ones added so that
+    /// `get_bounties_by_tag` stays consistent. The `TooManyTags` limit still
+    /// applies, and a `BountyTagsUpdated` event is emitted for the indexer.
+    pub fn update_tags(
+        env: Env,
+        creator: Address,
+        bounty_id: BountyId,
+        tags: Vec<Symbol>,
+    ) -> Result<(), ContractError> {
+        mutations::update_tags(env, creator, bounty_id, tags)
     }
 }
